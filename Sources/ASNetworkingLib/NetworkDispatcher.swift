@@ -213,9 +213,9 @@ extension NetworkDispatcher: AsyncDispatcherProtocol {
 
 //MARK: - PublisherDispatcherProtocol functions
 extension NetworkDispatcher: PublisherDispatcherProtocol {
-  public func fetch(uri:String? = nil,
-                    request:RequestProtocol,
-                    baseParams: ServiceParameters?) -> AnyPublisher<Response, ASNetworkError> {
+  public func fetchPublisher(uri:String? = nil,
+                             request:RequestProtocol,
+                             baseParams: ServiceParameters? = nil) -> AnyPublisher<Response, ASNetworkError> {
     let session = URLSession.shared
     guard let urlRequest = self.getUrlRequest(for: uri, request: request, parameters: baseParams) else {
       return Fail<Response, ASNetworkError>(error: ASNetworkError.errorWithDefault(.requestFailed))

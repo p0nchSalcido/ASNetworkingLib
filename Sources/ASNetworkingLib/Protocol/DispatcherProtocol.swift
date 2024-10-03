@@ -47,7 +47,7 @@ protocol AsyncDispatcherProtocol {
 }
 
 protocol PublisherDispatcherProtocol {
-  func fetch(uri:String?,
-             request:RequestProtocol,
-             baseParams: ServiceParameters?) -> AnyPublisher<Response, ASNetworkError>
+  func fetchPublisher(uri:String?,
+                      request:RequestProtocol,
+                      baseParams: ServiceParameters?) -> AnyPublisher<Response, ASNetworkError>
 }
