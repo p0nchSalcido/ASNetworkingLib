@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 
 public enum HttpProtocol: String {
   case https = "https://"
@@ -30,5 +31,23 @@ public struct Environment {
 
 protocol DispatcherProtocol {
   init(environment: Environment)
-  func fetch(uri:String?, request:RequestProtocol, baseParams: ServiceParameters?) async -> Result<Response,NetworkError>
+  func fetch(uri: String?,
+             request:RequestProtocol,
+             baseParams: ServiceParameters?,
+             completion: @escaping (Result<Response,ASNetworkError>) -> Void)
+}
+
+protocol AsyncDispatcherProtocol {
+  func fetch(uri:String?,
+             request:RequestProtocol,
+             baseParams: ServiceParameters?) async throws -> Response
+  func fetchResult(uri:String?,
+                   request:RequestProtocol,
+                   baseParams: ServiceParameters?) async -> Result<Response,ASNetworkError>
+}
+
+protocol PublisherDispatcherProtocol {
+  func fetch(uri:String?,
+             request:RequestProtocol,
+             baseParams: ServiceParameters?) -> AnyPublisher<Response, ASNetworkError>
 }

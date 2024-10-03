@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 
 public class NetworkDispatcher: DispatcherProtocol {
   
@@ -28,28 +29,37 @@ public class NetworkDispatcher: DispatcherProtocol {
   //MARK: - Fetch functions
   public func fetch(uri:String? = nil,
                     request:RequestProtocol,
-                    baseParams: ServiceParameters? = nil) async -> Result<Response,NetworkError> {
+                    baseParams: ServiceParameters?,
+                    completion: @escaping (Result<Response,ASNetworkError>) -> Void) {
     let session = URLSession.shared
-    if let urlRequest = self.getUrlRequest(for: uri, request: request, parameters: baseParams) {
-      do {
-        let result = try await session.data(for: urlRequest)
-        
-        guard let response = result.1 as? HTTPURLResponse,
-              response.statusCode == 200 else {
-          return .failure(NetworkError.errorWithDefault(.recuestFailed))
-        }
-      
-        return .success(Response(data: result.0, request: request))
-      } catch let sesionError {
-        return .failure(NetworkError.errorForServiceResponse(error:sesionError))
+    DispatchQueue.global(qos: .background).async {
+      guard let urlRequest = self.getUrlRequest(for: uri, request: request, parameters: baseParams) else {
+        completion(.failure(ASNetworkError.errorWithDefault(.requestFailed)))
+        return
       }
-    } else {
-      return .failure(NetworkError.errorWithDefault(.recuestFailed))
+      self.task = session.dataTask(with: urlRequest, completionHandler: self.validateTask(request: request, completion: completion))
+      self.task?.resume()
+    }
+  }
+  
+  private func validateTask(request: RequestProtocol?,
+                            completion:@escaping (Result<Response,ASNetworkError>) -> Void) -> ((Data?, URLResponse?, Error?) -> Void) {
+    
+    return { (data,response,error) in
+      // Validation of task error
+      if let sesionError = error {
+        completion(.failure(ASNetworkError.errorForServiceResponse(error:sesionError)))
+        return
+      }
+      //Validate of sessionResponse
+      let sesionResponse = Response(data: data, request: request)
+      //Send Success
+      completion(.success(sesionResponse))
     }
   }
   
   //MARK: - URLRequest methods
-  public func getUrlRequest(for uri:String?, request: RequestProtocol, parameters: ServiceParameters?) -> URLRequest? {
+  private func getUrlRequest(for uri:String?, request: RequestProtocol, parameters: ServiceParameters?) -> URLRequest? {
     let urlRequest = try? request.method == .get ? self.buildRequestGet(uri: uri, from: request, baseParams: parameters) : self.buildRequestPost(uri: uri, from: request, baseParams: parameters)
     return urlRequest
   }
@@ -72,7 +82,7 @@ public class NetworkDispatcher: DispatcherProtocol {
     } else if let validURL = setupURL(request: request) {
       url = validURL
     } else {
-      throw NetworkError.errorWithDefault(.missingURL)
+      throw ASNetworkError.errorWithDefault(.missingURL)
     }
     
     //Get request
@@ -114,7 +124,7 @@ public class NetworkDispatcher: DispatcherProtocol {
     } else if let validURL = setupURL(request: request) {
       url = validURL
     } else {
-      throw NetworkError.errorWithDefault(.missingURL)
+      throw ASNetworkError.errorWithDefault(.missingURL)
     }
     //Get request
     var urlRequest = URLRequest(url: url)
@@ -143,9 +153,9 @@ public class NetworkDispatcher: DispatcherProtocol {
   }
   
   private func configureParameters(bodyParameters: ServiceParameters?,
-                                       bodyEncoding: ParameterEncoding,
-                                       urlParameters: ServiceParameters?,
-                                       request: inout URLRequest) throws {
+                                   bodyEncoding: ParameterEncoding,
+                                   urlParameters: ServiceParameters?,
+                                   request: inout URLRequest) throws {
     do {
       try bodyEncoding.encode(urlRequest: &request,
                               bodyParameters: bodyParameters, urlParameters: urlParameters)
@@ -159,5 +169,67 @@ public class NetworkDispatcher: DispatcherProtocol {
     cookieStore.cookies?.forEach({ (cookie) in
       cookieStore.deleteCookie(cookie)
     })
+  }
+}
+
+//MARK: - AsyncDispatcherProtocol functions
+extension NetworkDispatcher: AsyncDispatcherProtocol {
+  public func fetch(uri:String? = nil,
+                    request:RequestProtocol,
+                    baseParams: ServiceParameters? = nil) async throws -> Response {
+    let session = URLSession.shared
+    guard let urlRequest = self.getUrlRequest(for: uri, request: request, parameters: baseParams)  else {
+      throw ASNetworkError.errorWithDefault(.missingURL)
+    }
+    do {
+      let result = try await session.data(for: urlRequest)
+      
+      guard let response = result.1 as? HTTPURLResponse,
+            response.statusCode == 200 else {
+        throw ASNetworkError.errorWithDefault(.requestFailed)
+      }
+      
+      return Response(data: result.0, request: request)
+    } catch let sesionError {
+      throw ASNetworkError.errorForServiceResponse(error:sesionError)
+    }
+  }
+  
+  public func fetchResult(uri:String? = nil,
+                          request:RequestProtocol,
+                          baseParams: ServiceParameters? = nil) async -> Result<Response, ASNetworkError> {
+    do {
+      let result = try await fetch(uri: uri, request: request, baseParams: baseParams)
+      return .success(result)
+    } catch let error {
+      if let asError = error as? ASNetworkError {
+        return .failure(asError)
+      } else {
+        return .failure(ASNetworkError.errorWithDefault(.requestFailed))
+      }
+    }
+  }
+}
+
+//MARK: - PublisherDispatcherProtocol functions
+extension NetworkDispatcher: PublisherDispatcherProtocol {
+  public func fetch(uri:String? = nil,
+                    request:RequestProtocol,
+                    baseParams: ServiceParameters?) -> AnyPublisher<Response, ASNetworkError> {
+    let session = URLSession.shared
+    guard let urlRequest = self.getUrlRequest(for: uri, request: request, parameters: baseParams) else {
+      return Fail<Response, ASNetworkError>(error: ASNetworkError.errorWithDefault(.requestFailed))
+        .eraseToAnyPublisher()
+    }
+      
+    return session.dataTaskPublisher(for: urlRequest)
+      .tryMap { data, response in
+        guard let response = response as? HTTPURLResponse,
+              response.statusCode == 200 else {
+          throw ASNetworkError.errorWithDefault(.requestFailed)
+        }
+        return Response(data: data, request: request)
+      }.mapError { error in error as? ASNetworkError ?? ASNetworkError.errorWithDefault(.requestFailed) }
+      .eraseToAnyPublisher()
   }
 }
